@@ -17,6 +17,7 @@ This project scans only the images used by currently running Podman containers a
 ## Run
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/vipin-surfly/On-Prem-Security-scan/refs/heads/main/run_scan.sh | bash
 chmod +x run_scan.sh generate_report.py
 ./run_scan.sh
 ```
