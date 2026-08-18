@@ -16,8 +16,17 @@ This project scans only the Python virtual environments in images used by curren
 
 ## Run
 
+Run directly from GitHub:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/vipin-surfly/On-Prem-Security-scan/refs/heads/main/run_scan.sh | bash
+```
+
+Alternatively, download both scripts and run them locally:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/vipin-surfly/On-Prem-Security-scan/refs/heads/main/run_scan.sh
+curl -fsSLO https://raw.githubusercontent.com/vipin-surfly/On-Prem-Security-scan/refs/heads/main/generate_report.py
 chmod +x run_scan.sh generate_report.py
 ./run_scan.sh
 ```
@@ -48,15 +57,18 @@ REPORT_DIR=/home/client/trivy-image-reports ./run_scan.sh
 
 ## Virtual environment path
 
-By default, the scanner reads `VIRTUAL_ENV` from each running container. You can
-set one path explicitly when all containers use the same virtual environment:
+By default, the scanner reads `VIRTUAL_ENV` from each running container. If it
+is not set, the scanner asks the container's `python3` or `python` interpreter
+for its active virtualenv. You can set one path explicitly when all containers
+use the same virtual environment:
 
 ```bash
 VENV_PATH=/opt/venv ./run_scan.sh
 ```
 
-The path must be absolute. A container with no usable virtual environment path
-is skipped; the scanner never falls back to scanning its entire image.
+The path must be absolute. A non-Python container or a container whose Python
+interpreter is not in a virtualenv is skipped; the scanner never falls back to
+scanning its entire image.
 
 ## Generate HTML without rescanning
 

@@ -4,7 +4,21 @@ set -euo pipefail
 REPORT_DIR="${REPORT_DIR:-$HOME/trivy-image-reports}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 VENV_PATH="${VENV_PATH:-}"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GENERATOR_URL="${GENERATOR_URL:-https://raw.githubusercontent.com/vipin-surfly/On-Prem-Security-scan/refs/heads/main/generate_report.py}"
+SCRIPT_PATH="${BASH_SOURCE[0]:-}"
+if [[ -n "$SCRIPT_PATH" ]]; then
+  SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+else
+  SCRIPT_DIR=""
+fi
+
+scan_root=""
+generator_temp=""
+cleanup() {
+  [[ -z "$scan_root" ]] || rm -rf -- "$scan_root"
+  [[ -z "$generator_temp" ]] || rm -f -- "$generator_temp"
+}
+trap cleanup EXIT
 
 usage() {
   cat <<USAGE
@@ -23,7 +37,9 @@ Environment variables:
   REPORT_DIR         Same as --report-dir.
   PYTHON_BIN         Python executable, default: python3.
   VENV_PATH          Virtualenv path in each container. By default, use its
-                     VIRTUAL_ENV environment variable.
+                     VIRTUAL_ENV environment variable or detect the active
+                     Python interpreter's virtualenv.
+  GENERATOR_URL      Report generator URL used when this script is piped to Bash.
 USAGE
 }
 
@@ -80,8 +96,6 @@ if [[ "$SKIP_SCAN" -eq 0 ]]; then
 
   declare -A scanned_images=()
   scan_root=$(mktemp -d "${TMPDIR:-/tmp}/trivy-venv-scan.XXXXXX")
-  trap 'rm -rf -- "$scan_root"' EXIT
-
   failed=0
   scanned=0
   for container_entry in "${containers[@]}"; do
@@ -98,8 +112,17 @@ if [[ "$SKIP_SCAN" -eq 0 ]]; then
         | sed -n 's/^VIRTUAL_ENV=//p' | head -n 1)
     fi
 
+    if [[ -z "$container_venv" ]]; then
+      for python_command in python3 python; do
+        container_venv=$(podman exec "$container" "$python_command" -c \
+          'import sys; print(sys.prefix if sys.prefix != sys.base_prefix else "")' \
+          2>/dev/null || true)
+        [[ -z "$container_venv" ]] || break
+      done
+    fi
+
     if [[ -z "$container_venv" || "$container_venv" != /* ]]; then
-      echo "WARNING: $image does not define an absolute VIRTUAL_ENV; skipping it." >&2
+      echo "WARNING: $image has no active Python virtualenv; skipping it." >&2
       failed=$((failed + 1))
       continue
     fi
@@ -142,7 +165,18 @@ if ! compgen -G "$REPORT_DIR/*.json" >/dev/null; then
 fi
 
 OUTPUT_HTML="$REPORT_DIR/consolidated-trivy-report.html"
-"$PYTHON_BIN" "$SCRIPT_DIR/generate_report.py" \
+generator_file="$SCRIPT_DIR/generate_report.py"
+if [[ -z "$SCRIPT_DIR" || ! -f "$generator_file" ]]; then
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "ERROR: curl is required when generate_report.py is not beside run_scan.sh." >&2
+    exit 4
+  fi
+  generator_temp=$(mktemp "${TMPDIR:-/tmp}/generate-trivy-report.XXXXXX.py")
+  curl -fsSL "$GENERATOR_URL" --output "$generator_temp"
+  generator_file=$generator_temp
+fi
+
+"$PYTHON_BIN" "$generator_file" \
   --input-dir "$REPORT_DIR" \
   --output "$OUTPUT_HTML"
 
