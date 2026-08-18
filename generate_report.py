@@ -68,8 +68,11 @@ def image_name(document: dict[str, Any], source: Path) -> str:
     return source.stem
 
 
-def load_vulnerabilities(paths: Iterable[Path]) -> tuple[list[Vulnerability], list[str]]:
+def load_vulnerabilities(
+    paths: Iterable[Path],
+) -> tuple[list[Vulnerability], set[str], list[str]]:
     vulnerabilities: list[Vulnerability] = []
+    images: set[str] = set()
     errors: list[str] = []
 
     for path in paths:
@@ -81,6 +84,7 @@ def load_vulnerabilities(paths: Iterable[Path]) -> tuple[list[Vulnerability], li
             continue
 
         image = image_name(document, path)
+        images.add(image)
         for result in document.get("Results") or []:
             target = text(result.get("Target"))
             package_type = text(result.get("Type"))
@@ -114,16 +118,17 @@ def load_vulnerabilities(paths: Iterable[Path]) -> tuple[list[Vulnerability], li
             item.package_name.lower(),
         )
     )
-    return vulnerabilities, errors
+    return vulnerabilities, images, errors
 
 
 def esc(value: str) -> str:
     return html.escape(value, quote=True)
 
 
-def make_report(vulnerabilities: list[Vulnerability], errors: list[str]) -> str:
+def make_report(
+    vulnerabilities: list[Vulnerability], images: set[str], errors: list[str]
+) -> str:
     counts = Counter(item.severity for item in vulnerabilities)
-    images = sorted({item.image for item in vulnerabilities})
 
     rows: list[str] = []
     for item in vulnerabilities:
@@ -156,7 +161,12 @@ def make_report(vulnerabilities: list[Vulnerability], errors: list[str]) -> str:
         error_html = f'<section class="warning"><strong>Files skipped:</strong><ul>{items}</ul></section>'
 
     if not rows:
-        rows.append('<tr><td colspan="9" class="empty">No vulnerabilities found.</td></tr>')
+        message = (
+            f"No vulnerabilities found in {len(images)} scanned image virtualenv(s)."
+            if images
+            else "No image virtualenvs were scanned."
+        )
+        rows.append(f'<tr><td colspan="9" class="empty">{message}</td></tr>')
 
     return f"""<!doctype html>
 <html lang="en">
@@ -291,11 +301,12 @@ def main() -> int:
         print(f"ERROR: No JSON files found in {input_dir}", file=sys.stderr)
         return 2
 
-    vulnerabilities, errors = load_vulnerabilities(json_files)
+    vulnerabilities, images, errors = load_vulnerabilities(json_files)
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(make_report(vulnerabilities, errors), encoding="utf-8")
+    output.write_text(make_report(vulnerabilities, images, errors), encoding="utf-8")
 
     print(f"Processed {len(json_files)} JSON file(s).")
+    print(f"Found {len(images)} scanned image virtualenv(s).")
     print(f"Found {len(vulnerabilities)} vulnerability record(s).")
     print(f"Wrote HTML report to {output}")
     return 0
