@@ -139,20 +139,27 @@ if [[ "$SKIP_SCAN" -eq 0 ]]; then
       continue
     fi
 
-    if ! trivy fs \
+    if ! trivy rootfs \
       --scanners vuln \
       --pkg-types library \
+      --list-all-pkgs \
       --format json \
       --output "$output_file" \
       "$scan_dir"; then
       echo "WARNING: Scan failed for $image" >&2
+      failed=$((failed + 1))
+    elif ! "$PYTHON_BIN" -c \
+      'import json, sys; d=json.load(open(sys.argv[1])); raise SystemExit(not any(r.get("Packages") for r in d.get("Results", [])))' \
+      "$output_file"; then
+      echo "WARNING: Trivy detected no installed packages in $image; discarding the empty scan." >&2
+      rm -f -- "$output_file"
       failed=$((failed + 1))
     else
       scanned=$((scanned + 1))
     fi
   done
 
-  echo "Scanned $scanned unique image virtualenv(s)."
+  echo "Scanned $scanned unique image virtualenv(s) with detected packages."
 
   if [[ "$failed" -gt 0 ]]; then
     echo "WARNING: $failed image scan(s) failed; generating report from successful scans." >&2

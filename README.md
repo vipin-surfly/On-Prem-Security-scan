@@ -106,5 +106,7 @@ podman ps --format '{{.ID}} {{.Image}}'
 ```
 
 It copies only `VIRTUAL_ENV` (or `VENV_PATH`) from one running container per
-unique image and invokes `trivy fs --pkg-types library` on that copy. Therefore,
-packages installed in the image's system Python do not affect the results.
+unique image and invokes `trivy rootfs --pkg-types library` on that copy. Rootfs
+mode inventories installed Python package metadata, while restricting the copied
+filesystem prevents system Python packages from affecting the results. An empty
+package inventory is rejected rather than reported as a clean scan.
