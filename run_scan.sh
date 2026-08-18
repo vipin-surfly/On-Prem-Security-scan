@@ -3,13 +3,14 @@ set -euo pipefail
 
 REPORT_DIR="${REPORT_DIR:-$HOME/trivy-image-reports}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+VENV_PATH="${VENV_PATH:-}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 usage() {
   cat <<USAGE
 Usage: $0 [--keep-json] [--skip-scan] [--report-dir DIR]
 
-Scans images used by currently running Podman containers with Trivy,
+Scans the Python virtual environments used by running Podman containers with Trivy,
 then generates a consolidated HTML report.
 
 Options:
@@ -21,6 +22,8 @@ Options:
 Environment variables:
   REPORT_DIR         Same as --report-dir.
   PYTHON_BIN         Python executable, default: python3.
+  VENV_PATH          Virtualenv path in each container. By default, use its
+                     VIRTUAL_ENV environment variable.
 USAGE
 }
 
@@ -68,31 +71,65 @@ if [[ "$SKIP_SCAN" -eq 0 ]]; then
     rm -f "$REPORT_DIR"/*.json
   fi
 
-  mapfile -t images < <(podman ps --format '{{.Image}}' | sed '/^[[:space:]]*$/d' | sort -u)
+  mapfile -t containers < <(podman ps --format '{{.ID}} {{.Image}}' | sed '/^[[:space:]]*$/d')
 
-  if [[ ${#images[@]} -eq 0 ]]; then
+  if [[ ${#containers[@]} -eq 0 ]]; then
     echo "ERROR: No running Podman containers were found." >&2
     exit 2
   fi
 
-  echo "Found ${#images[@]} unique image(s) used by running containers."
+  declare -A scanned_images=()
+  scan_root=$(mktemp -d "${TMPDIR:-/tmp}/trivy-venv-scan.XXXXXX")
+  trap 'rm -rf -- "$scan_root"' EXIT
 
   failed=0
-  for image in "${images[@]}"; do
+  scanned=0
+  for container_entry in "${containers[@]}"; do
+    container=${container_entry%% *}
+    image=${container_entry#* }
+    if [[ -n "${scanned_images[$image]+set}" ]]; then
+      continue
+    fi
+    scanned_images[$image]=1
+
+    container_venv=$VENV_PATH
+    if [[ -z "$container_venv" ]]; then
+      container_venv=$(podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$container" \
+        | sed -n 's/^VIRTUAL_ENV=//p' | head -n 1)
+    fi
+
+    if [[ -z "$container_venv" || "$container_venv" != /* ]]; then
+      echo "WARNING: $image does not define an absolute VIRTUAL_ENV; skipping it." >&2
+      failed=$((failed + 1))
+      continue
+    fi
+
     safe_name=$(printf '%s' "$image" | sed 's#[/:@]#_#g; s#[^A-Za-z0-9._-]#_#g')
     output_file="$REPORT_DIR/${safe_name}.json"
+    scan_dir="$scan_root/$safe_name"
+    mkdir -p "$scan_dir"
 
-    echo "Scanning: $image"
-    if ! trivy image \
-      --image-src podman \
+    echo "Scanning virtualenv: $image ($container_venv)"
+    if ! podman cp "$container:$container_venv/." "$scan_dir"; then
+      echo "WARNING: Could not copy virtualenv from $image" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+
+    if ! trivy fs \
       --scanners vuln \
+      --pkg-types library \
       --format json \
       --output "$output_file" \
-      "$image"; then
+      "$scan_dir"; then
       echo "WARNING: Scan failed for $image" >&2
       failed=$((failed + 1))
+    else
+      scanned=$((scanned + 1))
     fi
   done
+
+  echo "Scanned $scanned unique image virtualenv(s)."
 
   if [[ "$failed" -gt 0 ]]; then
     echo "WARNING: $failed image scan(s) failed; generating report from successful scans." >&2

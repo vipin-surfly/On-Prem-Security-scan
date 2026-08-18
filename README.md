@@ -1,6 +1,6 @@
 # Trivy Podman Running-Image Report
 
-This project scans only the images used by currently running Podman containers and creates one searchable HTML vulnerability report.
+This project scans only the Python virtual environments in images used by currently running Podman containers and creates one searchable HTML vulnerability report. System Python packages outside the virtual environment are not included.
 
 ## Requirements
 
@@ -11,7 +11,7 @@ This project scans only the images used by currently running Podman containers a
 
 ## Files
 
-- `run_scan.sh`: finds running Podman images, scans them with Trivy, and starts the report generator.
+- `run_scan.sh`: finds running Podman images, extracts and scans their virtual environments with Trivy, and starts the report generator.
 - `generate_report.py`: combines all Trivy JSON files into one HTML report.
 
 ## Run
@@ -46,6 +46,18 @@ or:
 REPORT_DIR=/home/client/trivy-image-reports ./run_scan.sh
 ```
 
+## Virtual environment path
+
+By default, the scanner reads `VIRTUAL_ENV` from each running container. You can
+set one path explicitly when all containers use the same virtual environment:
+
+```bash
+VENV_PATH=/opt/venv ./run_scan.sh
+```
+
+The path must be absolute. A container with no usable virtual environment path
+is skipped; the scanner never falls back to scanning its entire image.
+
 ## Generate HTML without rescanning
 
 ```bash
@@ -75,10 +87,12 @@ git push -u origin main
 
 ## Notes
 
-The script uses:
+The script uses the container ID and image reported by:
 
 ```bash
-podman ps --format '{{.Image}}'
+podman ps --format '{{.ID}} {{.Image}}'
 ```
 
-Therefore, it scans images referenced by running containers only. It scans each unique image once, even when several running containers use the same image.
+It copies only `VIRTUAL_ENV` (or `VENV_PATH`) from one running container per
+unique image and invokes `trivy fs --pkg-types library` on that copy. Therefore,
+packages installed in the image's system Python do not affect the results.

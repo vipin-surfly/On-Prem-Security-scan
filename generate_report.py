@@ -63,8 +63,9 @@ def image_name(document: dict[str, Any], source: Path) -> str:
     if repo_digests:
         return text(repo_digests[0])
 
-    artifact_name = document.get("ArtifactName")
-    return text(artifact_name) or source.stem
+    # Filesystem scans use a temporary extraction path as ArtifactName. The
+    # report filename is the stable image identifier chosen by run_scan.sh.
+    return source.stem
 
 
 def load_vulnerabilities(paths: Iterable[Path]) -> tuple[list[Vulnerability], list[str]]:
